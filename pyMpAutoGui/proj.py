@@ -7,9 +7,26 @@ mp_draw = mp.solutions.drawing_utils
 hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
 
 cap = cv2.VideoCapture(0)
+cap.set(3, 1280)  # Set width
+cap.set(4, 720)   # Set height
 
 screen_width, screen_height = pyautogui.size()
 prev_x, prev_y = 0, 0
+
+# Define the original size for the control area (16:9 aspect ratio)
+original_width = 300
+original_height = int(original_width * 9 / 16)
+
+# Increase control area size by 1.5 times
+control_area_width = int(original_width * 1.5)
+control_area_height = int(original_height * 1.5)
+
+# Set control area to the lower right corner
+control_area_x = 1280 - control_area_width - 20
+control_area_y = 720 - control_area_height - 20
+
+# Default cursor control keypoint (thumb)
+cursor_control_keypoint = 4  # Thumb
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -20,54 +37,50 @@ while cap.isOpened():
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
     
+    h, w, _ = frame.shape
+    center_x, center_y = control_area_x + control_area_width // 2, control_area_y + control_area_height // 2
+    
+    # Draw center square in the lower right corner with updated size
+    cv2.rectangle(frame, (control_area_x, control_area_y),
+                  (control_area_x + control_area_width, control_area_y + control_area_height), (0, 255, 0), 2)
+    
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
             mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
             
             landmarks = hand_landmarks.landmark
-            index_finger = landmarks[8]
+            cursor_finger = landmarks[cursor_control_keypoint]  # Use thumb for cursor movement
             thumb_tip = landmarks[4]
-            middle_finger = landmarks[12]
-            ring_finger = landmarks[16]
-            pinky_finger = landmarks[20]
+            index_tip = landmarks[8]
             
-            x, y = int(index_finger.x * screen_width), int(index_finger.y * screen_height)
+            # Normalize coordinates to the new control area (lower-right corner)
+            x = int(cursor_finger.x * w)
+            y = int(cursor_finger.y * h)
+            
+            if (control_area_x <= x <= control_area_x + control_area_width and
+                control_area_y <= y <= control_area_y + control_area_height):
+                mapped_x = ((x - control_area_x) / control_area_width) * screen_width
+                mapped_y = ((y - control_area_y) / control_area_height) * screen_height
+                
+                # Move mouse cursor
+                smooth_x = prev_x + (mapped_x - prev_x) * 0.2
+                smooth_y = prev_y + (mapped_y - prev_y) * 0.2
+                pyautogui.moveTo(smooth_x, smooth_y)
+                prev_x, prev_y = smooth_x, smooth_y
             
             # Draw keypoints on frame
             for i, landmark in enumerate(landmarks):
-                h, w, _ = frame.shape
                 cx, cy = int(landmark.x * w), int(landmark.y * h)
                 cv2.circle(frame, (cx, cy), 5, (255, 0, 255), -1)
                 cv2.putText(frame, str(i), (cx + 5, cy - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             
-            # Move mouse cursor
-            smooth_x = prev_x + (x - prev_x) * 0.2
-            smooth_y = prev_y + (y - prev_y) * 0.2
-            pyautogui.moveTo(smooth_x, smooth_y)
-            prev_x, prev_y = smooth_x, smooth_y
+            # Click and hold gesture (thumb and index touching)
+            if abs(index_tip.x - thumb_tip.x) < 0.03 and abs(index_tip.y - thumb_tip.y) < 0.03:
+                pyautogui.mouseDown()  # Click and hold
+                cv2.putText(frame, "Click & Hold", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            else:
+                pyautogui.mouseUp()  # Release the click
             
-            # Click gesture (thumb and index touching)
-            if abs(index_finger.x - thumb_tip.x) < 0.03 and abs(index_finger.y - thumb_tip.y) < 0.03:
-                pyautogui.click()
-                cv2.putText(frame, "Click", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            
-            # Scroll Up/Down (Middle and Index finger vertical difference)
-            if abs(index_finger.y - middle_finger.y) > 0.05:
-                if index_finger.y > middle_finger.y:
-                    pyautogui.scroll(-10)
-                else:
-                    pyautogui.scroll(10)
-                cv2.putText(frame, "Scrolling", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            
-            # Close Window (Fist Gesture: all fingers close together)
-            if (
-                abs(index_finger.x - pinky_finger.x) < 0.05
-                and abs(index_finger.y - pinky_finger.y) < 0.05
-                and abs(thumb_tip.y - pinky_finger.y) < 0.05
-            ):
-                pyautogui.hotkey('alt', 'f4')
-                cv2.putText(frame, "Closing Window", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.namedWindow("Hand Control", cv2.WINDOW_NORMAL)
     cv2.imshow("Hand Control", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
